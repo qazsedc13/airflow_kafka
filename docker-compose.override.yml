@@ -13,6 +13,20 @@ services:
     command: ["sh", "-c", "/usr/bin/kafka-topics --create --bootstrap-server kafka:9092,kafka:19092 --replication-factor 1 --partitions 1 --topic my_topic || true && /etc/confluent/docker/run"]
     networks:
       - my_network
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8888:8080
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: PLAINTEXT://kafka:9092,DOCKER_HACK://kafka:19092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    networks:
+      - my_network
   zookeeper:
     image: zookeeper:latest
     ports:
