@@ -14,7 +14,7 @@ default_args = {
 
 def get_kafka_config():
     """Получаем конфигурацию из соединения kafka_default типа Generic"""
-    conn = BaseHook.get_connection('kafka_default')
+    conn = BaseHook.get_connection('kafka_synapce')
     extra_config = json.loads(conn.extra or '{}')
     return {
         'bootstrap.servers': f"{conn.host}:{conn.port}",
@@ -24,7 +24,7 @@ def get_kafka_config():
 def produce_messages(**context):
     conf = get_kafka_config()
     producer = Producer(conf)
-    topic = "SCPL.BULKAGENTSEVENT.V1"
+    topic = "SCPL.BULKAGENTSERVICESEVENT.V1"
     
     test_messages = [
         {

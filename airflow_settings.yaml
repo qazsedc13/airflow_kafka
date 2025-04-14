@@ -7,7 +7,7 @@
 
 airflow:
   connections:
-    - conn_id: kafka_default
+    - conn_id: kafka_synapce
       conn_type: general
       conn_extra:
         bootstrap.servers: kafka:19092
