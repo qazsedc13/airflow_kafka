@@ -23,3 +23,11 @@ airflow:
         security.protocol: PLAINTEXT
         enable.auto.commit: False
         auto.offset.reset: "beginning"
+    # Дополнительный коннекшен (дублирующий тот, что создается через init-kap-db)
+    - conn_id: kap_247_db
+      conn_type: postgres
+      conn_host: kap_247_db
+      conn_login: kap_user
+      conn_password: kap_password
+      conn_schema: kap_data
+      conn_port: 5432

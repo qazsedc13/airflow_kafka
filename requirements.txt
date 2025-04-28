@@ -1,2 +1,4 @@
 confluent-kafka==2.1.1
 apache-airflow-providers-apache-kafka==1.0.0
+apache-airflow-providers-postgres>=5.0.0
+psycopg2-binary>=2.9.0

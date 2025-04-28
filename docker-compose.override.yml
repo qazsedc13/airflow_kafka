@@ -52,7 +52,48 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - my_network
+  
+  kap_247_db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: kap_user
+      POSTGRES_PASSWORD: kap_password
+      POSTGRES_DB: kap_data
+    ports:
+      - "5433:5432"  # Отличный порт от основного Postgres
+    volumes:
+      - kap_postgres_data:/var/lib/postgresql/data
+    networks:
+      - my_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kap_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Добавляем коннекшен при инициализации Airflow
+  init-kap-db:
+    image: quay.io/astronomer/astro-runtime:9.0.0
+    depends_on:
+      - kap_247_db
+      - webserver
+    environment:
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    command: >
+      bash -c "
+      airflow connections add 'kap_247_db' 
+      --conn-type 'postgres' 
+      --conn-host 'kap_247_db' 
+      --conn-login 'kap_user' 
+      --conn-password 'kap_password' 
+      --conn-schema 'kap_data'
+      "
+    networks:
+      - my_network
 
 networks:
   my_network:
     driver: bridge
+
+volumes:
+  kap_postgres_data:
