@@ -1,0 +1,137 @@
+{
+    "payload": {
+        "timestamp": "2025-04-25T09:09:19.032",
+        "event_type": "BULK_DELETE_AGENT_SERVICES",
+        "tenant_id": "16835756-cd3d-46a0-ad7e-34f8b0e65e6e",
+        "division_id": "2b42ee2a-5886-4666-a756-dc839f08595b",
+        "service_id": "1e18f98d-e8e4-4efd-baaf-5952088f11df",
+        "message_id": "0a3fac03-aa35-4a94-9197-684745d14959",
+        "service_kind": "STANDARD",
+        "user_info": [
+            {
+                "user_id": "94beae32-ee12-45cd-ab99-1ff7508b8510",
+                "tenant_user_id": "5bcf03d9-55af-4ae2-9431-b5858875478e",
+                "proficiency_level": 0,
+                "connection_type": "UNDEFINED_CONNECTION_TYPE",
+                "interaction_search_tactic": "UNDEFINED_INTERACTION_SEARCH_TACTIC",
+                "last_name": "Буркин",
+                "first_name": "Дмитрий",
+                "patronymic": "Андреевич",
+                "employee_id": "245632"
+            },
+            {
+                "user_id": "88bff09d-dcbb-41ce-8f89-39022ffbfcd5",
+                "tenant_user_id": "3f48d0ad-eec7-4ef9-927c-75c3cc060010",
+                "proficiency_level": 0,
+                "connection_type": "UNDEFINED_CONNECTION_TYPE",
+                "interaction_search_tactic": "UNDEFINED_INTERACTION_SEARCH_TACTIC",
+                "last_name": "Великолепный",
+                "first_name": "Джек",
+                "patronymic": "Дэниелс",
+                "employee_id": "4563215"
+            }
+        ],
+        "service_name": "Сервис Стандартный",
+        "division_name": "SCPL Tenantt"
+    },
+    "schema": {
+        "type": "struct",
+        "fields": [
+            {
+                "type": "string",
+                "field": "event_type",
+                "optional": false
+            },
+            {
+                "type": "string",
+                "field": "timestamp",
+                "optional": false
+            },
+            {
+                "type": "string",
+                "field": "tenant_id",
+                "optional": false
+            },
+            {
+                "type": "string",
+                "field": "division_id",
+                "optional": false
+            },
+            {
+                "type": "string",
+                "field": "division_name"
+            },
+            {
+                "type": "string",
+                "field": "full_division_name"
+            },
+            {
+                "type": "string",
+                "field": "service_id",
+                "optional": false
+            },
+            {
+                "type": "string",
+                "field": "service_name"
+            },
+            {
+                "type": "string",
+                "field": "message_id",
+                "optional": false
+            },
+            {
+                "type": "string",
+                "field": "service_kind"
+            },
+            {
+                "type": "array",
+                "field": "user_info",
+                "items": {
+                    "type": "struct",
+                    "fields": [
+                        {
+                            "type": "string",
+                            "field": "user_id"
+                        },
+                        {
+                            "type": "string",
+                            "field": "last_name"
+                        },
+                        {
+                            "type": "string",
+                            "field": "first_name"
+                        },
+                        {
+                            "type": "string",
+                            "field": "patronymic"
+                        },
+                        {
+                            "type": "string",
+                            "field": "employee_id"
+                        },
+                        {
+                            "type": "string",
+                            "field": "tenant_user_id"
+                        },
+                        {
+                            "type": "string",
+                            "field": "proficiency_level"
+                        },
+                        {
+                            "type": "string",
+                            "field": "connection_type"
+                        },
+                        {
+                            "type": "string",
+                            "field": "interaction_search_tactic"
+                        }
+                    ],
+                    "optional": false
+                },
+                "optional": false
+            }
+        ],
+        "optional": false,
+        "name": "bulkAgentServices_events"
+    } 
+}

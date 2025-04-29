@@ -1,112 +1,272 @@
 """
-Даг готовит витрины: '''###pkap_247_sch.billing_act_sent_info###'''
+DAG для обработки событий агентских сервисов из Kafka:
+1. Создаёт таблицы (если не существуют)
+2. Получает сообщения из Kafka
+3. Сохраняет сырые сообщения во временную таблицу
+4. Разбирает и сохраняет в основную таблицу
+5. Обновляет статус обработки
+6. Очищает старые обработанные данные
 """
 
-import logging
 from datetime import datetime, timedelta
 from airflow.decorators import dag, task
 from pendulum import datetime
 from airflow.hooks.base import BaseHook
-from airflow.providers.apache.kafka.operators.produce import ProduceToTopicOperator
 from airflow.providers.apache.kafka.operators.consume import ConsumeFromTopicOperator
-from airflow.providers.postgres.operators.postgres import PostgresOperator
-import json
 from sqlalchemy import create_engine, text
-import pandas as pd
-import codecs
-import os
-
 import uuid
+import logging
 
-
-CONN_ID_PKAP = 'pkap_247_db'
+# Константы
 CONN_ID_KAP = 'kap_247_db'
 KAFKA_TOPIC_C = "SCPL.BULKAGENTSERVICESEVENT.V1"
+SCHEMA_NAME = "kap_247_scpl"
+TMP_TABLE = "bulkagentservicesevent_tmp"
+MAIN_TABLE = "BULKAGENTSERVICESEVENT"
+DATA_RETENTION_DAYS = 30  # Хранение данных во временной таблице
+PROCESSING_BATCH_SIZE = 500  # Размер пачки для обработки
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# SQL для создания таблиц
+CREATE_TMP_TABLE_SQL = f"""
+CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.{TMP_TABLE} (
+    id SERIAL PRIMARY KEY,
+    message_key VARCHAR(255) NOT NULL,
+    text_json JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMP WITH TIME ZONE,
+    processing_status VARCHAR(20) DEFAULT 'NEW'
+);
+"""
+
+CREATE_MAIN_TABLE_SQL = f"""
+CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.{MAIN_TABLE} (
+    id SERIAL PRIMARY KEY,
+    tmp_record_id INTEGER REFERENCES {SCHEMA_NAME}.{TMP_TABLE}(id),
+    event_type VARCHAR(50) NOT NULL,
+    event_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    tenant_id UUID NOT NULL,
+    division_id UUID NOT NULL,
+    division_name VARCHAR(255),
+    service_id UUID NOT NULL,
+    service_name VARCHAR(255),
+    message_id UUID NOT NULL,
+    service_kind VARCHAR(50),
+    user_id UUID NOT NULL,
+    tenant_user_id UUID NOT NULL,
+    proficiency_level INTEGER,
+    connection_type VARCHAR(50),
+    interaction_search_tactic VARCHAR(50),
+    last_name VARCHAR(100),
+    first_name VARCHAR(100),
+    patronymic VARCHAR(100),
+    employee_id VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_{MAIN_TABLE}_tmp_id ON {SCHEMA_NAME}.{MAIN_TABLE}(tmp_record_id);
+CREATE INDEX IF NOT EXISTS idx_{MAIN_TABLE}_timestamp ON {SCHEMA_NAME}.{MAIN_TABLE}(event_timestamp);
+CREATE INDEX IF NOT EXISTS idx_{MAIN_TABLE}_tenant ON {SCHEMA_NAME}.{MAIN_TABLE}(tenant_id);
+"""
 
 def _get_engine(conn_id_str):
-    """
-    Функция для создания движка базы данных.
+    """Создаёт и возвращает SQLAlchemy engine"""
+    conn = BaseHook.get_connection(conn_id_str)
+    return create_engine(
+        f'postgresql+psycopg2://{conn.login}:{conn.password}@{conn.host}:{conn.port}/{conn.schema}',
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=3600
+    )
 
-    Args:
-        conn_id_str (str): Идентификатор подключения.
-
-    Returns:
-        Engine: Движок базы данных.
-    """
-    # Загружаем настройки
-    connection = BaseHook.get_connection(conn_id_str)
-
-    user = connection.login
-    password = connection.password
-    host = connection.host
-    port = connection.port
-    dbname = connection.schema
-
-    return create_engine(f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}?target_session_attrs=read-write',
-                         pool_pre_ping=True)
-
+def _ensure_tables_exist():
+    """Создаёт таблицы если они не существуют"""
+    engine = _get_engine(CONN_ID_KAP)
+    with engine.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}"))
+        conn.execute(text(CREATE_TMP_TABLE_SQL))
+        conn.execute(text(CREATE_MAIN_TABLE_SQL))
+    engine.dispose()
 
 def consume_function(message, rqUid):
-    """
-    Функция для обработки сообщений из Kafka.
+    """Обрабатывает сообщение из Kafka и сохраняет во временную таблицу"""
+    engine = _get_engine(CONN_ID_KAP)
+    try:
+        if not message or not hasattr(message, 'value'):
+            logger.error('Получено некорректное сообщение')
+            return
 
-    Args:
-        message: Сообщение из Kafka.
-        rqUid: Идентификатор запроса.
-    """
-    if not isinstance(message, object):
-        logging.error('Получено некорректное сообщение')
-        logging.info('Идентификатор запроса: %s', rqUid)
-    elif message.value() is None:
-        logging.warning('Получено пустое сообщение')
-        logging.info('Идентификатор запроса: %s', rqUid)
-    elif len(message.value()) == 0:
-        logging.warning('Получено сообщение с длиной 0')
-        logging.info('Идентификатор запроса: %s', rqUid)
-    else:
-        logging.info('Полное сообщение: %s', message.value())
-        logging.info('Идентификатор запроса: %s', rqUid)
+        msg_value = message.value()
+        if not msg_value:
+            logger.warning('Получено пустое сообщение')
+            return
 
-        #Вставляем сообщение в базу данных
-        engine = _get_engine(CONN_ID_KAP)
-        with engine.connect() as conn:
-            decoded_message = message.value().decode('utf-8')
-            conn.execute(text("INSERT INTO kap_247_scpl.bulkagentservicesevent_tmp (text_json) VALUES (:decoded_message)"), {"decoded_message": decoded_message})
+        decoded_message = msg_value.decode('utf-8')
+        message_key = message.key().decode('utf-8') if message.key() else str(uuid.uuid4())
+
+        # Логирование информации о сообщении
+        logger.info(f"Получено сообщение. Key: {message_key}, Size: {len(decoded_message)} bytes")
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"""
+                INSERT INTO {SCHEMA_NAME}.{TMP_TABLE} 
+                (message_key, text_json, processing_status)
+                VALUES (:key, :message, 'PROCESSED')
+                """),
+                {"key": message_key, "message": decoded_message}
+            )
+    except Exception as e:
+        logger.error(f"Ошибка обработки сообщения: {str(e)}", exc_info=True)
+    finally:
+        engine.dispose()
+
+@task
+def process_messages():
+    """Переносит данные из временной таблицы в основную"""
+    engine = _get_engine(CONN_ID_KAP)
     
+    with engine.begin() as conn:
+        # Логирование статистики перед обработкой
+        total = conn.execute(text(f"""
+            SELECT COUNT(*) 
+            FROM {SCHEMA_NAME}.{TMP_TABLE}
+            WHERE processing_status = 'PROCESSED'
+            AND processed_at IS NULL
+        """)).scalar()
+        logger.info(f"Найдено {total} записей для обработки")
+
+        if total == 0:
+            logger.info("Нет новых записей для обработки")
+            return
+
+        # Обработка пачками
+        processed = 0
+        while processed < total:
+            batch = conn.execute(text(f"""
+                WITH batch AS (
+                    SELECT id, text_json
+                    FROM {SCHEMA_NAME}.{TMP_TABLE}
+                    WHERE processing_status = 'PROCESSED'
+                    AND processed_at IS NULL
+                    ORDER BY created_at
+                    LIMIT {PROCESSING_BATCH_SIZE}
+                    FOR UPDATE SKIP LOCKED
+                )
+                INSERT INTO {SCHEMA_NAME}.{MAIN_TABLE} (
+                    tmp_record_id, event_type, event_timestamp, tenant_id, 
+                    division_id, division_name, service_id, service_name,
+                    message_id, service_kind, user_id, tenant_user_id,
+                    proficiency_level, connection_type, interaction_search_tactic,
+                    last_name, first_name, patronymic, employee_id
+                )
+                SELECT 
+                    batch.id,
+                    batch.text_json::jsonb->'payload'->>'event_type',
+                    (batch.text_json::jsonb->'payload'->>'timestamp')::timestamp,
+                    (batch.text_json::jsonb->'payload'->>'tenant_id')::uuid,
+                    (batch.text_json::jsonb->'payload'->>'division_id')::uuid,
+                    batch.text_json::jsonb->'payload'->>'division_name',
+                    (batch.text_json::jsonb->'payload'->>'service_id')::uuid,
+                    batch.text_json::jsonb->'payload'->>'service_name',
+                    (batch.text_json::jsonb->'payload'->>'message_id')::uuid,
+                    batch.text_json::jsonb->'payload'->>'service_kind',
+                    (user_info->>'user_id')::uuid,
+                    (user_info->>'tenant_user_id')::uuid,
+                    (user_info->>'proficiency_level')::integer,
+                    user_info->>'connection_type',
+                    user_info->>'interaction_search_tactic',
+                    user_info->>'last_name',
+                    user_info->>'first_name',
+                    user_info->>'patronymic',
+                    user_info->>'employee_id'
+                FROM 
+                    batch,
+                    jsonb_array_elements(batch.text_json::jsonb->'payload'->'user_info') user_info
+                RETURNING tmp_record_id
+            """)).rowcount
+
+            # Обновление статуса для обработанных записей
+            updated = conn.execute(text(f"""
+                UPDATE {SCHEMA_NAME}.{TMP_TABLE}
+                SET processed_at = CURRENT_TIMESTAMP
+                WHERE id IN (
+                    SELECT id 
+                    FROM {SCHEMA_NAME}.{TMP_TABLE}
+                    WHERE processing_status = 'PROCESSED'
+                    AND processed_at IS NULL
+                    ORDER BY created_at
+                    LIMIT {PROCESSING_BATCH_SIZE}
+                    FOR UPDATE SKIP LOCKED
+                )
+            """)).rowcount
+
+            processed += updated
+            logger.info(f"Обработано {updated} записей. Всего: {processed}/{total}")
+
+@task
+def cleanup_old_data():
+    """Очищает старые обработанные данные"""
+    engine = _get_engine(CONN_ID_KAP)
+    with engine.begin() as conn:
+        deleted = conn.execute(text(f"""
+            DELETE FROM {SCHEMA_NAME}.{TMP_TABLE}
+            WHERE processed_at < NOW() - INTERVAL '{DATA_RETENTION_DAYS} days'
+            RETURNING id
+        """)).rowcount
+        logger.info(f"Удалено {deleted} старых записей")
 
 @dag(
     start_date=datetime(2025, 4, 9),
-    schedule=None,
+    schedule_interval="@hourly",
     catchup=False,
+    max_active_runs=1,
+    concurrency=4,
     render_template_as_native_obj=True,
-    tags=['test', 'kafka']
+    tags=['kafka', 'postgres', 'scpl', 'production'],
+    default_args={
+        'retries': 3,
+        'retry_delay': timedelta(minutes=5),
+        'retry_exponential_backoff': True,
+        'max_retry_delay': timedelta(minutes=30)
+    }
 )
-def job_kafka_read_json4():
-    """
-    DAG для чтения сообщений из Kafka и обработки их с помощью функции consume_function.
-    """
+def job_kafka_read_json4_prod():
     @task
-    def rqUid_generator():
-        """Генерируем идентификатор"""
+    def setup_database():
+        """Создаёт таблицы если они не существуют"""
+        _ensure_tables_exist()
+    
+    @task
+    def generate_rq_uid():
+        """Генерирует уникальный ID для отслеживания"""
         return str(uuid.uuid4())
     
-    # Убираем скобки () у оператора
-    consume = ConsumeFromTopicOperator(
+    consume_task = ConsumeFromTopicOperator(
         task_id="consume",
         kafka_config_id="kafka_synapce",
-        commit_cadence='never',
         topics=[KAFKA_TOPIC_C],
         apply_function=consume_function,
-        apply_function_kwargs={
-            "rqUid": "{{ ti.xcom_pull(task_ids='rqUid_generator')}}"
-        },
-        poll_timeout=10,
-        max_messages=20,
-        max_batch_size=20,
+        apply_function_kwargs={"rqUid": "{{ ti.xcom_pull(task_ids='generate_rq_uid')}}"},
+        commit_cadence="end_of_batch",
+        max_messages=PROCESSING_BATCH_SIZE * 2,
+        max_batch_size=PROCESSING_BATCH_SIZE,
+        poll_timeout=30
     )
 
-    # Правильный синтаксис для установки зависимостей
-    rqUid_generator() >> consume
+    # Порядок выполнения задач
+    setup_db = setup_database()
+    rq_uid = generate_rq_uid()
+    process_task = process_messages()
+    cleanup_task = cleanup_old_data()
+    
+    setup_db >> rq_uid >> consume_task >> process_task >> cleanup_task
 
-
-job_kafka_read_json4()
+job_kafka_read_json4_prod()
