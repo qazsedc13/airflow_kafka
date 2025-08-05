@@ -1,11 +1,11 @@
 """
-DAG для обработки событий агентских сервисов из Kafka:
-1. Создаёт таблицы (если не существуют)
-2. Получает сообщения из Kafka
-3. Сохраняет сырые сообщения во временную таблицу
-4. Разбирает и сохраняет в основную таблицу
-5. Обновляет статус обработки
-6. Очищает старые обработанные данные
+DAG для обработки событий агентских сервисов из Kafka (для apache-airflow-providers-apache-kafka==1.2.0)
+
+
+
+
+
+
 """
 
 from datetime import datetime, timedelta
@@ -23,8 +23,8 @@ KAFKA_TOPIC_C = "SCPL.BULKAGENTSERVICESEVENT.V1"
 SCHEMA_NAME = "kap_247_scpl"
 TMP_TABLE = "bulkagentservicesevent_tmp"
 MAIN_TABLE = "BULKAGENTSERVICESEVENT"
-DATA_RETENTION_DAYS = 30  # Хранение данных во временной таблице
-PROCESSING_BATCH_SIZE = 500  # Размер пачки для обработки
+DATA_RETENTION_DAYS = 30
+PROCESSING_BATCH_SIZE = 500
 
 # Настройка логирования
 logging.basicConfig(
@@ -76,7 +76,12 @@ CREATE INDEX IF NOT EXISTS idx_{MAIN_TABLE}_tenant ON {SCHEMA_NAME}.{MAIN_TABLE}
 """
 
 def _get_engine(conn_id_str):
-    """Создаёт и возвращает SQLAlchemy engine"""
+    """Создаёт и возвращает SQLAlchemy engine
+    
+    
+    
+    
+    """
     conn = BaseHook.get_connection(conn_id_str)
     return create_engine(
         f'postgresql+psycopg2://{conn.login}:{conn.password}@{conn.host}:{conn.port}/{conn.schema}',
@@ -87,7 +92,9 @@ def _get_engine(conn_id_str):
     )
 
 def _ensure_tables_exist():
-    """Создаёт таблицы если они не существуют"""
+    """Создаёт таблицы если они не существуют
+    
+    """
     engine = _get_engine(CONN_ID_KAP)
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}"))
@@ -96,32 +103,37 @@ def _ensure_tables_exist():
     engine.dispose()
 
 def consume_function(message, rqUid):
-    """Обрабатывает сообщение из Kafka и сохраняет во временную таблицу"""
+    """
+    Обрабатывает сообщения из kafka и сохраняет во временную таблицу
+    
+    
+    
+    """
     engine = _get_engine(CONN_ID_KAP)
     try:
         if not message or not hasattr(message, 'value'):
-            logger.error('Получено некорректное сообщение')
+            logger.error('Получено некорректное ообщение')
             return
-
+        
         msg_value = message.value()
         if not msg_value:
-            logger.warning('Получено пустое сообщение')
+            logger.warning('получено пустое сообщение')
             return
-
-        decoded_message = msg_value.decode('utf-8')
+        
+        decode_message = msg_value.decode('utf-8')
         message_key = message.key().decode('utf-8') if message.key() else str(uuid.uuid4())
 
-        # Логирование информации о сообщении
-        logger.info(f"Получено сообщение. Key: {message_key}, Size: {len(decoded_message)} bytes")
+        # Логирование информациии о сообщении
+        logger.info(f"Получено сообщение. Key: {message_key}, Size: {len(decode_message)} bytes")
 
         with engine.begin() as conn:
             conn.execute(
                 text(f"""
-                INSERT INTO {SCHEMA_NAME}.{TMP_TABLE} 
+                INSERT INTO {SCHEMA_NAME}.{TMP_TABLE}
                 (message_key, text_json, processing_status)
                 VALUES (:key, :message, 'PROCESSED')
                 """),
-                {"key": message_key, "message": decoded_message}
+                {"key": message_key, "message": decode_message}
             )
     except Exception as e:
         logger.error(f"Ошибка обработки сообщения: {str(e)}", exc_info=True)
@@ -130,24 +142,26 @@ def consume_function(message, rqUid):
 
 @task
 def process_messages():
-    """Переносит данные из временной таблицы в основную"""
+    """Переносит данные из временной таблицы в основную
+    
+    """
     engine = _get_engine(CONN_ID_KAP)
     
     with engine.begin() as conn:
-        # Логирование статистики перед обработкой
+        
         total = conn.execute(text(f"""
             SELECT COUNT(*) 
             FROM {SCHEMA_NAME}.{TMP_TABLE}
             WHERE processing_status = 'PROCESSED'
             AND processed_at IS NULL
         """)).scalar()
-        logger.info(f"Найдено {total} записей для обработки")
-
+        logger.info(f"Найдено {total} записей для обработки в БД")
+        
         if total == 0:
             logger.info("Нет новых записей для обработки")
             return
-
-        # Обработка пачками
+            
+        
         processed = 0
         while processed < total:
             batch = conn.execute(text(f"""
@@ -192,8 +206,8 @@ def process_messages():
                     jsonb_array_elements(batch.text_json::jsonb->'payload'->'user_info') user_info
                 RETURNING tmp_record_id
             """)).rowcount
-
-            # Обновление статуса для обработанных записей
+            
+            
             updated = conn.execute(text(f"""
                 UPDATE {SCHEMA_NAME}.{TMP_TABLE}
                 SET processed_at = CURRENT_TIMESTAMP
@@ -207,13 +221,15 @@ def process_messages():
                     FOR UPDATE SKIP LOCKED
                 )
             """)).rowcount
-
+            
             processed += updated
             logger.info(f"Обработано {updated} записей. Всего: {processed}/{total}")
 
 @task
 def cleanup_old_data():
-    """Очищает старые обработанные данные"""
+    """Очищает старые обработанные данные
+    
+    """
     engine = _get_engine(CONN_ID_KAP)
     with engine.begin() as conn:
         deleted = conn.execute(text(f"""
@@ -230,23 +246,29 @@ def cleanup_old_data():
     max_active_runs=1,
     concurrency=4,
     render_template_as_native_obj=True,
-    tags=['kafka', 'postgres', 'scpl', 'production'],
+    tags=['kafka', 'integr', 'scpl'],
     default_args={
         'retries': 3,
         'retry_delay': timedelta(minutes=5),
-        'retry_exponential_backoff': True,
+        'retry_exponential_backof': True,
         'max_retry_delay': timedelta(minutes=30)
     }
 )
-def job_kafka_read_json4_prod():
+def job_kafka_read_BULKAGENTSERVICESEVENT():
     @task
     def setup_database():
-        """Создаёт таблицы если они не существуют"""
+        """Создаёт таблицы если они не существуют
+        
+        """
         _ensure_tables_exist()
     
     @task
     def generate_rq_uid():
-        """Генерирует уникальный ID для отслеживания"""
+        """Генерирует уникальный ID для отслеживания
+        
+        
+        
+        """
         return str(uuid.uuid4())
     
     consume_task = ConsumeFromTopicOperator(
@@ -255,12 +277,12 @@ def job_kafka_read_json4_prod():
         topics=[KAFKA_TOPIC_C],
         apply_function=consume_function,
         apply_function_kwargs={"rqUid": "{{ ti.xcom_pull(task_ids='generate_rq_uid')}}"},
-        commit_cadence="end_of_batch",
+        commit_cadence='end_of_batch',
         max_messages=PROCESSING_BATCH_SIZE * 200,
         max_batch_size=PROCESSING_BATCH_SIZE,
         poll_timeout=30
     )
-
+    
     # Порядок выполнения задач
     setup_db = setup_database()
     rq_uid = generate_rq_uid()
@@ -269,4 +291,4 @@ def job_kafka_read_json4_prod():
     
     setup_db >> rq_uid >> consume_task >> process_task >> cleanup_task
 
-job_kafka_read_json4_prod()
+job_kafka_read_BULKAGENTSERVICESEVENT()

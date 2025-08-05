@@ -8,13 +8,13 @@
 airflow:
   connections:
     - conn_id: kafka_synapce
-      conn_type: general
+      conn_type: kafka
       conn_extra:
         bootstrap.servers: kafka:19092
-        group.id: group_1
+        group.id: pkape_airflow_kafka
         security.protocol: PLAINTEXT
         enable.auto.commit: False
-        auto.offset.reset: "beginning"
+        auto.offset.reset: "earliest"
     - conn_id: kafka_listener
       conn_type: general
       conn_extra:

@@ -167,7 +167,7 @@ def produce_messages(**context):
     
     test_messages = []
     
-    for i in range(100000):  # Генерируем 5 сообщений
+    for i in range(1000):  # Генерируем 5 сообщений
         user_count = random.randint(1, 5)  # Случайное количество пользователей от 1 до 5
         
         payload = {
@@ -202,7 +202,7 @@ def produce_messages(**context):
     producer.flush()
 
 with DAG(
-    dag_id='produce_agents_events',
+    dag_id='job_kafka_produce_json_BULKAGENTSERVICESEVENT',
     default_args=default_args,
     description='Отправка тестовых событий агентов в Kafka',
     schedule_interval=None,
