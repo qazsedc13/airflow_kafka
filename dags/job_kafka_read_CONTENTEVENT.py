@@ -1,13 +1,11 @@
-import json  # Добавляем этот импорт в начало файла
 from datetime import datetime, timedelta
 from airflow.decorators import dag, task
 from pendulum import datetime
 from airflow.hooks.base import BaseHook
-from airflow.operators.python import PythonOperator
+from airflow.providers.apache.kafka.operators.consume import ConsumeFromTopicOperator
 from sqlalchemy import create_engine, text
 import uuid
 import logging
-from confluent_kafka import Consumer, KafkaException
 
 # Константы
 CONN_ID_KAP = 'kap_247_db'
@@ -17,7 +15,6 @@ TMP_TABLE = "contentevent_tmp"
 MAIN_TABLE = "CONTENTEVENT_air"
 DATA_RETENTION_DAYS = 30
 PROCESSING_BATCH_SIZE = 500
-NO_MESSAGES_WAIT_SECONDS = 30
 
 # Настройка логирования
 logging.basicConfig(
@@ -25,7 +22,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
 
 # SQL для создания таблиц
 CREATE_TMP_TABLE_SQL = f"""
@@ -247,61 +243,6 @@ def cleanup_old_data():
         """)).rowcount
         logger.info(f"Удалено {deleted} старых записей")
 
-def kafka_consumer_operator(**context):
-    """Кастомный оператор для чтения из Kafka"""
-    conn = BaseHook.get_connection('kafka_synapce')
-    extra_config = {}
-    try:
-        extra_config = json.loads(conn.extra or '{}')
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка парсинга extra конфига Kafka: {str(e)}")
-    
-    conf = {
-        'bootstrap.servers': f"{conn.host}:{conn.port}",
-        'group.id': f"airflow_{context['dag'].dag_id}_{context['ts_nodash']}",
-        'auto.offset.reset': 'latest',
-        'enable.auto.commit': False,
-        **extra_config
-    }
-    
-    logger.info(f"Подключаемся к Kafka с конфигом: {str(conf)}")
-    
-    consumer = Consumer(conf)
-    consumer.subscribe([KAFKA_TOPIC_C])
-    
-    try:
-        processed_count = 0
-        while processed_count < PROCESSING_BATCH_SIZE * 200:
-            msg = consumer.poll(timeout=NO_MESSAGES_WAIT_SECONDS)
-            
-            if msg is None:
-                logger.info("Новых сообщений в топике не обнаружено")
-                break
-            if msg.error():
-                if msg.error().code() == KafkaException._PARTITION_EOF:
-                    logger.info("Достигнут конец раздела топика")
-                    continue
-                else:
-                    logger.error(f"Ошибка Kafka: {msg.error()}")
-                    raise KafkaException(msg.error())
-            
-            try:
-                # Обработка сообщения
-                consume_function(msg, context['ti'].xcom_pull(task_ids='generate_rq_uid'))
-                processed_count += 1
-                if processed_count % 100 == 0:
-                    logger.info(f"Обработано сообщений: {processed_count}")
-            except Exception as e:
-                logger.error(f"Ошибка обработки сообщения: {str(e)}", exc_info=True)
-                continue
-            
-    except Exception as e:
-        logger.error(f"Критическая ошибка в consumer: {str(e)}", exc_info=True)
-        raise
-    finally:
-        consumer.close()
-        logger.info("Consumer закрыт")
-
 @dag(
     start_date=datetime(2025, 4, 9),
     schedule_interval="@hourly",
@@ -328,11 +269,16 @@ def job_kafka_read_CONTENTEVENT():
         """Генерирует уникальный ID для отслеживания"""
         return str(uuid.uuid4())
     
-    # Заменяем ConsumeFromTopicOperator на PythonOperator
-    consume_task = PythonOperator(
+    consume_task = ConsumeFromTopicOperator(
         task_id="consume",
-        python_callable=kafka_consumer_operator,
-        provide_context=True
+        kafka_config_id="kafka_synapce",
+        topics=[KAFKA_TOPIC_C],
+        apply_function=consume_function,
+        apply_function_kwargs={"rqUid": "{{ ti.xcom_pull(task_ids='generate_rq_uid')}}"},
+        commit_cadence='end_of_batch',
+        max_messages=PROCESSING_BATCH_SIZE * 200,
+        max_batch_size=PROCESSING_BATCH_SIZE,
+        poll_timeout=30
     )
     
     # Порядок выполнения задач
