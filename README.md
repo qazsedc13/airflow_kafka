@@ -1,18 +1,49 @@
+# Airflow Kafka Integration (Astro)
 
-## Option 2: Use the Astro CLI
+Проект на базе Astro CLI для разработки и тестирования интеграции Apache Airflow с Apache Kafka.
 
-Download the [Astro CLI](https://docs.astronomer.io/astro/cli/install-cli) to run Airflow locally in Docker. `astro` is the only package you will need to install.
+## Описание
+Данный репозиторий содержит набор DAG для работы с Kafka, включая задачи по публикации сообщений (Produce) и их чтению (Consume). Проект настроен для использования с Astro CLI, что упрощает локальную разработку и развертывание в облаке Astronomer.
 
-1. Run `git clone https://github.com/qazsedc13/airflow_kafka.git` on your computer to create a local clone of this repository.
-2. Install the Astro CLI by following the steps in the [Astro CLI documentation](https://docs.astronomer.io/astro/cli/install-cli). Docker Desktop/Docker Engine is a prerequisite, but you don't need in-depth Docker knowledge to run Airflow with the Astro CLI.
-3. Run `astro dev start` in your cloned repository.
-4. After your Astro project has started. View the Airflow UI at `localhost:8080`.
-5. Unpause all DAGs. Manually run the `produce_consume_treats` DAG to see the pipeline in action. Note that a random function is used to generate parts of the message to Kafka which determines if the `listen_for_mood` task will trigger the downstream `walking_your_pet` DAG. You might need to run the `produce_consume_treats` several times to see the full pipeline in action!
+## Технологический стек
+- **Оркестрация:** Apache Airflow (развернутый через Astro CLI)
+- **Брокер сообщений:** Apache Kafka
+- **Язык программирования:** Python
+- **Провайдеры Airflow:** 
+  - `apache-airflow-providers-apache-kafka`
+  - `apache-airflow-providers-amazon`
+  - `apache-airflow-providers-apache-spark`
+- **Библиотеки:** `confluent-kafka`, `kafka-python`, `boto3`
 
-# Resources
+## Установка и запуск
 
-- [Use Apache Kafka with Apache Airflow tutorial](https://docs.astronomer.io/learn/airflow-kafka).
-- [Apache Kafka Airflow provider documentation](https://airflow.apache.org/docs/apache-airflow-providers-apache-kafka/stable/index.html).
-- [Apache Kafka documentation](https://kafka.apache.org/documentation/). 
-- [Apache Airflow documentation](https://airflow.apache.org/docs/apache-airflow/stable/index.html).
-- [Airflow Quickstart](https://docs.astronomer.io/learn/airflow-quickstart).
+1. Установите [Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli).
+2. Склонируйте репозиторий:
+   ```bash
+   git clone git@github.com:qazsedc13/airflow_kafka.git
+   ```
+3. Запустите проект локально:
+   ```bash
+   astro dev start
+   ```
+4. После успешного запуска Airflow будет доступен по адресу [http://localhost:8080](http://localhost:8080) (логин/пароль: `admin`/`admin`).
+
+## Примеры использования
+В проекте реализовано множество примеров в папке `dags/`:
+- `kafka-example`: Базовый пример использования `ProduceToTopicOperator` и `ConsumeFromTopicOperator`.
+- `job_kafka_produce_json.py`: Демонстрация отправки структурированных JSON-данных в Kafka.
+- `job_kafka_read_json3.py` / `job_kafka_read_json4.py`: Примеры чтения и обработки JSON-сообщений.
+- `produce_consume_treats.py`: Сложный сценарий взаимодействия с Kafka.
+
+## Структура проекта
+- `dags/` — исходный код всех DAG-файлов.
+- `tests/` — тесты на целостность DAG и корректность логики.
+- `requirements.txt` — список Python-зависимостей.
+- `packages.txt` — системные пакеты, необходимые для работы (например, библиотеки для Kafka).
+- `airflow_settings.yaml` — локальные настройки подключений и переменных Airflow.
+- `.astro/` — конфигурационные файлы Astro CLI.
+
+## Зависимости и требования
+- Docker Engine 20.10.0+
+- Astro CLI
+- Настроенный брокер Kafka (в примерах используется `kafka:19092`).
